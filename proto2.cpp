@@ -57,7 +57,7 @@ int main(int argc, char *argv[])
 
 				if(flag == 1)
 				{
-					MPI_Recv(&foo, 1, MPI_INT, i, 0, MPI_COMM_WORLD, &status); //must change datatypes for buf and all
+					MPI_Recv(&foo, 1, MPI_INT, i, 0, MPI_COMM_WORLD, &status); 
 					MPI_Send(&buf, 1, MPI_UNSIGNED_LONG_LONG, i, 0, MPI_COMM_WORLD);
 					buf[0] = buf[0] + grain;
 
