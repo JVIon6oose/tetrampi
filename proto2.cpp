@@ -1,19 +1,27 @@
 #include <stdio.h>
 #include <vector>
 #include <mpi.h>
+#include <time.h>
 
 int main(int argc, char *argv[])
 {
+	clock_t start, finish;
+	double time;
+
+	start = clock();
+
 	MPI_Request request;
 	MPI_Status status;
+	char sig[1];
 	char procname[MPI_MAX_PROCESSOR_NAME];
+	bool state = true;
 	unsigned long long int buf[1];
-	int foo[1];
+	unsigned long long int foo[1];
 	int namelen, rank, numprocs;
 	unsigned long long int i;
 
 	//grain
-	int grain = 10000;
+	int grain = 1000;
 
 	//grain for k=2
 	int grain2 = 1000;
@@ -22,46 +30,47 @@ int main(int argc, char *argv[])
 	int grain3 = 1000;
 
 	//testing limit
-	unsigned long long int  max = 10000000000000;
+	unsigned long long int  max = 8000032000;
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
 	MPI_Get_processor_name(procname, &namelen);
 
-	buf[0] = 40000000000;
+	buf[0] = 8000000000;
 
+	//MASTER process
 	if(rank == 0)
 	{
-		bool state = true;
 		int flag = 0;
 
-	//send index to each
+		//send index to each
 
-		for(i = 0; i < numprocs; i++)
+		for(i = 1; i < numprocs; i++)
 		{
 			MPI_Send(&buf, 1, MPI_UNSIGNED_LONG_LONG, i, 0, MPI_COMM_WORLD);
 			buf[0] = buf[0] + grain;
-			std::cout << "Processing " << buf[0] << ".\n";
 		}
-
-	//continually listen and hand out new grains if pending message
+		//continually listen and hand out new grains if pending message
 
 		while(state)
 		{
 
 			for(i = 1; i < numprocs; i++)
-
 			{
 				MPI_Iprobe(i, 0, MPI_COMM_WORLD, &flag, &status);
 
+
 				if(flag == 1)
 				{
-					MPI_Recv(&foo, 1, MPI_INT, i, 0, MPI_COMM_WORLD, &status); 
+
+					MPI_Recv(&foo, 1, MPI_UNSIGNED_LONG_LONG, i, 0, MPI_COMM_WORLD, &status);
+
+					std::cout << "Processed " << foo[0] + grain << ".\n";
+
 					MPI_Send(&buf, 1, MPI_UNSIGNED_LONG_LONG, i, 0, MPI_COMM_WORLD);
 					buf[0] = buf[0] + grain;
 
-					std::cout << "Processing " << buf[0] << ".\n";
 
 					if(buf[0] >= max)
 					{
@@ -77,11 +86,31 @@ int main(int argc, char *argv[])
 		for(i = 1; i < numprocs; i++)
 		{
 			MPI_Probe(i, 0, MPI_COMM_WORLD, &status);
+			MPI_Recv(&foo, 1, MPI_UNSIGNED_LONG_LONG, i, 0, MPI_COMM_WORLD, &status);
+
+			std::cout << "Processed " << foo[0] + grain << "\n";
+
 		}
 
-		MPI_Abort(MPI_COMM_WORLD, -1);
+		std::cout << procname << " MASTER has finished.\n";
+
+		buf[0] = -1;
+
+		//send flag to processers to call MPI_Finalize()
+		for(i = 1; i < numprocs; i++)
+		{
+			MPI_Send(&buf, 1, MPI_UNSIGNED_LONG_LONG, i, 0, MPI_COMM_WORLD);
+		}
+
+		finish = clock();
+
+		time = (double) finish - start / CLOCKS_PER_SEC;
+
+		std::cout << "Time expired: " << time << "\n";
+
 	}
 
+	//slave process
 	else
 	{
 		std::vector<unsigned long long int> tet_1;
@@ -108,20 +137,19 @@ int main(int argc, char *argv[])
 		int t3 = 0;
 		int tt3 = 0;
 
-
-	//receive index
+		//receive index
 		MPI_Irecv(&buf, 1, MPI_UNSIGNED_LONG_LONG, 0, 0, MPI_COMM_WORLD, &request);
 		MPI_Wait(&request, &status);
 
 		i = 1;
 		num = 1;
 
-	/*******************************************************************************
+		/*******************************************************************************
 
-	Create tet_1 sequence to max, simple while loop. Entire sequence lies in memory
-	(as a vector).
+		Create tet_1 sequence to max, simple while loop. Entire sequence lies in memory
+		(as a vector).
 
-	*******************************************************************************/
+		*******************************************************************************/
 
 		while (num <= max)
 		{
@@ -131,19 +159,19 @@ int main(int argc, char *argv[])
 			num = num/6;
 		}
 
+		tet_1.push_back(num);
 		tet_2.push_back(0);
 		tet_3.push_back(0);
 
-		//MAINTENANCE:: must fix while true loop!! get rid of ugly MPI_Abort!!!
-		while(true)
+		while(state)
 		{
 
-		/*******************************************************************************
+			/*******************************************************************************
 
-		Create tet_2 via tet_1. Sort by insertion while generating ith sum. Discard
-		doubles within sequence, which are found by sorting.
+			Create tet_2 via tet_1. Sort by insertion while generating ith sum. Discard
+			doubles within sequence, which are found by sorting.
 
-		*******************************************************************************/
+			*******************************************************************************/
 
 			if((g2 == grain2) || (tet_2[tet_2.size() - 1] < buf[0] + grain))
 			{
@@ -158,7 +186,7 @@ int main(int argc, char *argv[])
 
 				tet_2.clear();
 
-			//find lower limit for grain2 (index of max combinatorial sum less than N)
+				//find lower limit for grain2 (index of max combinatorial sum less than N)
 
 				while(tet_1[i] * 2 <= buf[0])
 				{
@@ -167,14 +195,14 @@ int main(int argc, char *argv[])
 
 				l = i;
 
-			//find upper limit for grain2 (index of min combinatorial sum less than N + grain)
+				//find upper limit for grain2 (index of min combinatorial sum less than N + grain)
 
 				while((tet_1[l] + 1 <= buf[0] + grain2) && (l < tet_1.size()))
 				{
 					l++;
 				}
 
-			//first case tet_2 generation
+				//first case tet_2 generation
 
 				for(j = 0; j <= i; j++)
 				{
@@ -189,12 +217,12 @@ int main(int argc, char *argv[])
 
 				i++;
 
-			//first cases tet_2 generation, impose lower limit
+				//first cases tet_2 generation, impose lower limit
 
 				while(tet_1[i] + 1 < buf[0])
 				{
 
-				//k is current insertion point, m is ith insertion point
+					//k is current insertion point, m is ith insertion point
 
 					j = 0;
 					num = tet_1[i] + tet_1[j];
@@ -210,8 +238,8 @@ int main(int argc, char *argv[])
 					{
 						num = tet_1[i] + tet_1[j];
 
-					//skip multiples, sort by insertion (not insertion sort)
-					//k is current insertion point, n is ith insertion point
+						//skip multiples, sort by insertion (not insertion sort)
+						//k is current insertion point, n is ith insertion point
 
 						if(num > tet_2[tet_2.size() - 1])
 						{
@@ -240,7 +268,7 @@ int main(int argc, char *argv[])
 
 				}
 
-			//middle cases tet_2 generation
+				//middle cases tet_2 generation
 
 				while((tet_1[i] * 2 <= buf[0] + grain2) && (tet_1[i] * 2 <= max))
 				{
@@ -286,7 +314,7 @@ int main(int argc, char *argv[])
 
 				}
 
-			//last cases tet_2 generation
+				//last cases tet_2 generation
 
 				while(i < l)
 				{
@@ -340,15 +368,15 @@ int main(int argc, char *argv[])
 
 			else
 			{
-				g2 = g2 + grain;
+				g2 = g2 + grain2;
 			}
 
-		/*******************************************************************************
+			/*******************************************************************************
 
-		Create tet_3 via tet_1. Sort by insertion while generating ith sum. Discard
-		doubles within sequence, which are found by sorting.
+			Create tet_3 via tet_1. Sort by insertion while generating ith sum. Discard
+			doubles within sequence, which are found by sorting.
 
-		*******************************************************************************/
+			*******************************************************************************/
 
 			if(g3 == grain3 || (tet_3[tet_3.size() - 1] < buf[0] + grain))
 			{
@@ -365,13 +393,13 @@ int main(int argc, char *argv[])
 
 				tet_3.clear();
 
-			//allow for a search space for K == 4
+				//allow for a search space for K == 4
 				if(buf[0] != 0)
 				{
 					num = buf[0] - 1;
 				}
 
-			//find lower limit for grain3 (index of max combinatorial sum less than N - 1)
+				//find lower limit for grain3 (index of max combinatorial sum less than N - 1)
 
 				while(tet_1[i] * 3 <= num)
 				{
@@ -380,17 +408,18 @@ int main(int argc, char *argv[])
 
 				l = i;
 
-			//find upper limit for grain3 (index of min combinatorial sum less than N + grain)
+				//find upper limit for grain3 (index of min combinatorial sum less than N + grain)
 
 				while((tet_1[l] + 2 <= buf[0] + grain3) && (l < tet_1.size()))
 				{
 					l++;
 				}
 
-			//first cases tet_3 generation, impose lower limit
+				//first cases tet_3 generation, impose lower limit
 
 				while(tet_1[i] + 2 < buf[0])
 				{
+
 					j = 0;
 					n = 0;
 					num = tet_1[i] + tet_1[j];
@@ -442,7 +471,7 @@ int main(int argc, char *argv[])
 
 				}
 
-			//middle cases tet_3 generation
+				//middle cases tet_3 generation
 
 				while((tet_1[i] * 3 <= buf[0] + grain3) && (tet_1[i] * 3 <= max))
 				{
@@ -498,7 +527,7 @@ int main(int argc, char *argv[])
 
 				}
 
-			//last cases tet_3 generation
+				//last cases tet_3 generation
 
 				while(i < l)
 				{
@@ -560,14 +589,16 @@ int main(int argc, char *argv[])
 
 			else
 			{
-				g3 = g3 + grain;
+				g3 = g3 + grain3;
 			}
 
-		/******************************************************************************
 
-		Binary search arrays, tet_1, tet_2, tet_3.
 
-		******************************************************************************/
+			/******************************************************************************
+
+			Binary search arrays, tet_1, tet_2, tet_3.
+
+			******************************************************************************/
 
 
 			if(buf[0] + grain > max)
@@ -591,7 +622,7 @@ int main(int argc, char *argv[])
 				k = tet_1.size() - 1;
 				j = t1;
 
-			//binary search tet_1
+				//binary search tet_1
 
 				while(k >= j)
 				{
@@ -610,14 +641,12 @@ int main(int argc, char *argv[])
 					else
 					{
 						k = j - 1;
-						t1 = l;
+						t1 = j;
 						found = true;
-						//MAINTENANCE:: possibly track numbers of k-numbers found? get via MPI reduction operation?
-//						/*MAINTENANCE::*/ std::cout << procname << " found " << i << " as a tet_1.\n";
 					}
 				}
 
-			//binary search tet_2
+				//binary search tet_2
 
 				if(!found)
 				{
@@ -640,15 +669,14 @@ int main(int argc, char *argv[])
 
 						else
 						{
-//						/*MAINTENANCE::*/ std::cout << procname << " found " << i << " as a tet_2.\n";
 							k = j - 1;
-							t2 = l;
+							t2 = j;
 							found = true;
 						}
 					}
 				}
 
-			//binary search tet_3
+				//binary search tet_3
 
 				if(!found)
 				{
@@ -671,21 +699,20 @@ int main(int argc, char *argv[])
 
 						else
 						{
-//							/*MAINTENANCE::*/ std::cout << procname << " found " << i << " as a tet_3.\n";
 							k = j - 1;
-							t3 = l;
+							t3 = j;
 							found = true;
 						}
 					}
 				}
 
-		/******************************************************************************
+				/******************************************************************************
 
-		Search heuristics for tet_4 numbers.
+				Search heuristics for tet_4 numbers.
 
-		******************************************************************************/
+				******************************************************************************/
 
-			//if N - 1 is in tet_3, N is a tet_4 number.
+				//if N - 1 is in tet_3, N is a tet_4 number.
 
 				if(!found)
 				{
@@ -708,14 +735,13 @@ int main(int argc, char *argv[])
 
 						else
 						{
-//							/*MAINTENANCE::*/ std::cout << procname << " found " << i << " as a tet_4.\n";
 							k = j - 1;
 							found = true;
 						}
 					}
 				}
 
-			//iteratively search for N - tet_1[i] in tet_3, create temp_tet_3 when necessary
+				//iteratively search for N - tet_1[i] in tet_3, create temp_tet_3 when necessary
 
 				if(!found)
 				{
@@ -723,7 +749,7 @@ int main(int argc, char *argv[])
 					j = tet_1.size() - 1;
 					num3 = 0;
 
-				//find greatest tet_1 less than N
+					//find greatest tet_1 less than N
 
 					while(tet_1[j] > i)
 					{
@@ -733,9 +759,9 @@ int main(int argc, char *argv[])
 					while(j >= 1 && !found)
 					{
 
-						num2 = i - tet_1[j];
+						num2 = i - tet_1[j];		
 
-					//binary search tet_3 if it may include N
+						//binary search tet_3 if it may include N
 
 						if(num2 >= buf[0])
 						{
@@ -758,19 +784,18 @@ int main(int argc, char *argv[])
 
 								else
 								{
-//									/*MAINTENANCE::*/ std::cout << procname << " afound " << i << " as a tet_4.\n";
 									k = m - 1;
 									found = true;
 								}
 							}
 						}
 
-					//create temp_tet_3 otherwise so that it may include N
+						//create temp_tet_3 otherwise so that it may include N
 
 						else
 						{
 
-						//if current temp_tet_3, do binary search
+							//if current temp_tet_3, do binary search
 
 							if((num2 >= num3) && (num3 != 0) && (num2 <= num3 + grain3))
 							{
@@ -793,7 +818,6 @@ int main(int argc, char *argv[])
 
 									else
 									{
-//										/*MAINTENANCE::*/ std::cout << procname << " bfound " << i << " as a tet_4.\n";
 										k = m - 1;
 										tt3 = m;
 										found = true;
@@ -802,7 +826,7 @@ int main(int argc, char *argv[])
 
 							}
 
-						//else create temp_tet_3
+							//else create temp_tet_3
 
 							else
 							{
@@ -822,6 +846,7 @@ int main(int argc, char *argv[])
 
 								//i is N, num2 is N - K1,j is iterator for N - K1
 								//num is iterator limit for searching N grain
+								//changed i, num and num 2 to o, num3 and num4.
 
 								if(grain3 > num2)
 								{
@@ -834,7 +859,7 @@ int main(int argc, char *argv[])
 									num3 = num3 - grain3;
 								}
 
-							//find lower limit for grain3 (index of max combinatorial sum less than N - 1)
+								//find lower limit for grain3 (index of max combinatorial sum less than N - 1)
 
 								while(tet_1[o] * 3 <= num3)
 								{
@@ -843,14 +868,14 @@ int main(int argc, char *argv[])
 
 								l = o;
 
-							//find upper limit for grain3 (index of min combinatorial sum less than N + grain)
+								//find upper limit for grain3 (index of min combinatorial sum less than N + grain)
 
 								while((tet_1[l] + 2 <= num3 + grain3) && (l < tet_1.size()))
 								{
 									l++;
 								}
 
-							//first cases temp_tet_3 generation, impose lower limit
+								//first cases temp_tet_3 generation, impose lower limit
 
 								while(tet_1[o] + 2 < num3)
 								{
@@ -905,7 +930,7 @@ int main(int argc, char *argv[])
 									o++;
 								}
 
-							//middle cases temp_tet_3 generation
+								//middle cases temp_tet_3 generation
 
 								while((tet_1[o] * 3 <= num3 + grain3) && (tet_1[o] * 3 <= max))
 								{
@@ -960,9 +985,9 @@ int main(int argc, char *argv[])
 									o++;
 
 
-							}
+								}
 
-							//last cases temp_tet_3 generation
+								//last cases temp_tet_3 generation
 
 								while(o < l)
 								{
@@ -1038,7 +1063,6 @@ int main(int argc, char *argv[])
 
 									else
 									{
-//										/*MAINTENANCE::*/ std::cout << procname << " cfound " << i << " as a tet_4.\n";
 										k = m - 1;
 										tt3 = m;
 										found = true;
@@ -1052,9 +1076,11 @@ int main(int argc, char *argv[])
 					}
 				}
 
-				if((!found) && (i > 343867))
+				if(!found)
 				{
-					std::cout << i << "\n";
+					//This is for k >= 5.
+					std::cout << procname << " did not find " << i << "\n";
+
 				}
 
 				temp_tet_3.clear();
@@ -1065,8 +1091,15 @@ int main(int argc, char *argv[])
 
 			found = false;
 
-			MPI_Send(&foo, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+			foo[0] = buf[0];
+
+			MPI_Send(&foo, 1, MPI_UNSIGNED_LONG_LONG, 0, 0, MPI_COMM_WORLD);
 			MPI_Recv(&buf, 1, MPI_UNSIGNED_LONG_LONG, 0, 0, MPI_COMM_WORLD, &status);
+
+			if(buf[0] == -1)
+			{
+				state = false;
+			}
 		}
 	}
 
